@@ -1,14 +1,89 @@
 #include "memory.h"
+#include <fstream>
 
 Memory::Memory() {
-  for (int i = 0; i < 65536; i++) {
-    memory[i] = 0;
-  }
+  memset(rom, 0, sizeof(rom));
+  memset(vram, 0, sizeof(vram));
+  memset(eram, 0, sizeof(eram));
+  memset(wram, 0, sizeof(wram));
+  memset(oam, 0, sizeof(oam));
+  memset(io, 0, sizeof(io));
+  memset(hram, 0, sizeof(hram));
+
+  IE = 0;
 }
 
-uint8_t Memory::read(uint16_t addr) { return memory[addr]; }
+uint8_t Memory::read(uint16_t addr) {
+  if (addr <= 0x7FFF)
+    return rom[addr];
 
-void Memory::write(uint16_t addr, uint8_t value) { memory[addr] = value; }
+  else if (addr <= 0x9FFF)
+    return vram[addr - 0x8000];
+
+  else if (addr <= 0xBFFF)
+    return eram[addr - 0xA000];
+
+  else if (addr <= 0xDFFF)
+    return wram[addr - 0xC000];
+
+  // echo RAM
+  else if (addr <= 0xFDFF)
+    return wram[addr - 0xE000];
+
+  else if (addr <= 0xFE9F)
+    return oam[addr - 0xFE00];
+
+  else if (addr >= 0xFF00 && addr <= 0xFF7F)
+    return io[addr - 0xFF00];
+
+  else if (addr >= 0xFF80 && addr <= 0xFFFE)
+    return hram[addr - 0xFF80];
+
+  else if (addr == 0xFFFF)
+    return IE;
+
+  return 0xFF;
+}
+
+void Memory::write(uint16_t addr, uint8_t value) {
+  if (addr <= 0x7FFF)
+    return;
+
+  else if (addr <= 0x9FFF)
+    vram[addr - 0x8000] = value;
+
+  else if (addr <= 0xBFFF)
+    eram[addr - 0xA000] = value;
+
+  else if (addr <= 0xDFFF)
+    wram[addr - 0xC000] = value;
+
+  else if (addr <= 0xFDFF)
+    wram[addr - 0xE000] = value;
+
+  else if (addr <= 0xFE9F)
+    oam[addr - 0xFE00] = value;
+
+  else if (addr >= 0xFF00 && addr <= 0xFF7F)
+    io[addr - 0xFF00] = value;
+
+  else if (addr >= 0xFF80 && addr <= 0xFFFE)
+    hram[addr - 0xFF80] = value;
+
+  else if (addr == 0xFFFF)
+    IE = value;
+}
+
+bool Memory::loadROM(const char *filename) {
+  std::ifstream file(filename, std::ios::binary);
+
+  if (!file)
+    return false;
+
+  file.read((char *)rom, sizeof(rom));
+
+  return true;
+}
 
 // 0000-3FFF ROM bank 00
 // 4000-7FFF ROM bank 01-NN
