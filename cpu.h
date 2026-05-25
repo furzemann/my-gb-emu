@@ -7,25 +7,39 @@ class CPU {
 public:
   CPU(Memory *mem);
 
-  // Execute one instruction
-  // returns cycle count
   int step();
 
 private:
   Memory *mmu;
 
-  typedef int (CPU::*OpcodeFunc)();
+  using OpcodeFunc = int (CPU::*)();
 
   OpcodeFunc table[256];
   OpcodeFunc cbtable[256];
 
+  //------------------------
   // registers
+  //------------------------
+
   uint8_t A, F, B, C, D, E, H, L;
 
   uint16_t SP;
   uint16_t PC;
 
+  //------------------------
+  // register lookup
+  //------------------------
+
+  uint8_t *regs[8];
+
+  // used by generated opcode dispatch
+  int loadDst[256];
+  int loadSrc[256];
+
+  //------------------------
   // flags
+  //------------------------
+
   static constexpr uint8_t FLAG_Z = 1 << 7;
   static constexpr uint8_t FLAG_N = 1 << 6;
   static constexpr uint8_t FLAG_H = 1 << 5;
@@ -44,6 +58,13 @@ private:
   void setBC(uint16_t v);
   void setDE(uint16_t v);
   void setHL(uint16_t v);
+
+  //------------------------
+  // memory helpers
+  //------------------------
+
+  uint8_t readHL();
+  void writeHL(uint8_t v);
 
   //------------------------
   // fetch
@@ -69,7 +90,7 @@ private:
   void CP(uint8_t val);
 
   //------------------------
-  // inc / dec
+  // inc/dec
   //------------------------
 
   void INC8(uint8_t &reg);
@@ -91,6 +112,15 @@ private:
   void SLA(uint8_t &reg);
   void SRA(uint8_t &reg);
   void SRL(uint8_t &reg);
+
+  //------------------------
+  // accumulator versions
+  //------------------------
+
+  int RLCA();
+  int RRCA();
+  int RLA();
+  int RRA();
 
   //------------------------
   // bit operations
@@ -137,6 +167,24 @@ private:
   bool getC();
 
   //------------------------
+  // generic dispatchers
+  //------------------------
+
+  int LD_r_r(int dst, int src);
+
+  int LD_DISPATCH();
+
+  int ALU_DISPATCH();
+
+  int CB_DISPATCH();
+
+  int BIT_DISPATCH();
+
+  int RES_DISPATCH();
+
+  int SET_DISPATCH();
+
+  //------------------------
   // opcode handlers
   //------------------------
 
@@ -159,10 +207,37 @@ private:
 
   int RET_OP();
 
+  int RL_C();
+
   //------------------------
-  // CB opcodes
+  // immediates
   //------------------------
 
-  int RL_C();
+  int ADD_A_d8();
+
+  int SUB_d8();
+
+  int AND_d8();
+
+  int XOR_d8();
+
+  int OR_d8();
+
+  int CP_d8();
+
+  //------------------------
+  // stack pair ops
+  //------------------------
+
+  int PUSH_BC();
+  int POP_BC();
+
+  int PUSH_DE();
+  int POP_DE();
+
+  int PUSH_HL();
+  int POP_HL();
+
+  int PUSH_AF();
+  int POP_AF();
 };
-;
