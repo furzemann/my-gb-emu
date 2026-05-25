@@ -9,7 +9,12 @@ Memory::Memory() {
   memset(oam, 0, sizeof(oam));
   memset(io, 0, sizeof(io));
   memset(hram, 0, sizeof(hram));
-
+  io[0x40] = 0x91; // LCDC
+  io[0x42] = 0x00; // SCY
+  io[0x43] = 0x00; // SCX
+  io[0x44] = 0x00; // LY
+  io[0x47] = 0xFC; // BG palette
+  io[0x0F] = 0xE1; // IF
   IE = 0;
 }
 
@@ -94,6 +99,6 @@ bool Memory::loadROM(const char *filename) {
 // E000-FDFF Echo (unusable)
 // FE00-FE9F OAM
 // FEAO-FEFF Unsuable
-// FF80-FF7F I/O registers
+// FF00-FF7F I/O registers
 // FF80-FFFE High RAM
 // FFFF-FFFF Interupt enabler

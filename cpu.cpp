@@ -217,12 +217,8 @@ CPU::CPU(Memory *mem) {
 }
 
 int CPU::step() {
-  uint8_t opcode = fetch8();
 
-  if (opcode == 0xCB) {
-    uint8_t cb = fetch8();
-    return (this->*cbtable[cb])();
-  }
+  uint8_t opcode = fetch8();
 
   return (this->*table[opcode])();
 }
