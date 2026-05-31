@@ -25,7 +25,8 @@ private:
 
   uint16_t SP;
   uint16_t PC;
-
+  bool justEnabledEI = false;
+  bool halted = false;
   //------------------------
   // register lookup
   //------------------------
@@ -185,6 +186,15 @@ private:
   int SET_DISPATCH();
 
   //------------------------
+  // interrupts
+  //------------------------
+
+  bool IME;
+  bool EI_pending;
+
+  void serviceInterrupt();
+
+  //------------------------
   // opcode handlers
   //------------------------
 
@@ -240,4 +250,6 @@ private:
 
   int PUSH_AF();
   int POP_AF();
+
+  int HALT_OP();
 };

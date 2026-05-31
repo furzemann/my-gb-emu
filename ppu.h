@@ -35,5 +35,6 @@ private:
   uint8_t STAT();
 
   void requestInterrupt(int bit);
+  uint8_t applyPalette(uint8_t color);
+  void renderSprites();
 };
-;

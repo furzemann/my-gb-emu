@@ -5,8 +5,16 @@ PPU::PPU(Memory *mem) { mmu = mem; }
 
 void PPU::step(int cycles) {
 
-  if (!(LCDC() & 0x80))
+  if (!(LCDC() & 0x80)) {
+
+    modeClock = 0;
+
+    setLY(0);
+
+    setMode(HBLANK);
+
     return;
+  }
 
   modeClock += cycles;
 
@@ -49,6 +57,7 @@ void PPU::step(int cycles) {
         setMode(VBLANK);
 
         requestInterrupt(0);
+
       } else {
 
         setMode(OAM);
@@ -76,7 +85,6 @@ void PPU::step(int cycles) {
     break;
   }
 }
-
 uint8_t PPU::tilePixel(int tile, int x, int y, bool signedMode) {
 
   uint16_t tileAddr;
@@ -111,7 +119,6 @@ void PPU::renderScanline() {
   uint8_t scx = mmu->read(0xFF43);
 
   uint8_t ly = LY();
-  printf("render line %d\n", ly);
 
   int y = (scy + ly) & 255;
 
@@ -138,9 +145,10 @@ void PPU::renderScanline() {
     int pixelY = y % 8;
 
     uint8_t color = tilePixel(tile, pixelX, pixelY, signedMode);
-
+    color = applyPalette(color);
     framebuffer[ly * 160 + x] = color;
   }
+  renderSprites();
 }
 
 void PPU::setMode(int m) {
@@ -171,4 +179,69 @@ void PPU::requestInterrupt(int bit) {
   IF |= (1 << bit);
 
   mmu->write(0xFF0F, IF);
+}
+
+uint8_t PPU::applyPalette(uint8_t color) {
+
+  uint8_t bgp = mmu->read(0xFF47);
+
+  return (bgp >> (color * 2)) & 0x3;
+}
+
+void PPU::renderSprites() {
+
+  uint8_t ly = LY();
+
+  bool spriteSize = LCDC() & (1 << 2);
+
+  int height = spriteSize ? 16 : 8;
+
+  for (int i = 0; i < 40; i++) {
+
+    uint16_t addr = 0xFE00 + i * 4;
+
+    int y = mmu->read(addr) - 16;
+    int x = mmu->read(addr + 1) - 8;
+
+    uint8_t tile = mmu->read(addr + 2);
+
+    uint8_t flags = mmu->read(addr + 3);
+
+    bool flipX = flags & (1 << 5);
+    bool flipY = flags & (1 << 6);
+
+    // sprite not on this scanline
+    if (ly < y || ly >= y + height)
+      continue;
+
+    int row = ly - y;
+
+    if (flipY)
+      row = height - 1 - row;
+
+    uint16_t tileAddr = 0x8000 + tile * 16;
+
+    tileAddr += row * 2;
+
+    uint8_t lo = mmu->read(tileAddr);
+    uint8_t hi = mmu->read(tileAddr + 1);
+
+    for (int px = 0; px < 8; px++) {
+
+      int bit = flipX ? px : (7 - px);
+
+      uint8_t color = (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1);
+
+      // color 0 = transparent
+      if (color == 0)
+        continue;
+
+      int screenX = x + px;
+
+      if (screenX < 0 || screenX >= 160)
+        continue;
+
+      framebuffer[ly * 160 + screenX] = applyPalette(color);
+    }
+  }
 }

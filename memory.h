@@ -12,9 +12,13 @@ public:
 
   bool loadROM(const char *filename);
 
+  // advance hardware timers by given CPU cycles
+  void tick(int cycles);
+
 private:
   uint8_t rom[0x8000];
-
+  int divCounter = 0;
+  int timerCounter = 0;
   uint8_t vram[0x2000];
 
   uint8_t eram[0x2000];
@@ -28,6 +32,10 @@ private:
   uint8_t hram[0x7F];
 
   uint8_t IE;
+
+  // internal timer counters (cycle accumulators)
+  int div_counter = 0;
+  int tima_counter = 0;
 };
 // 0000-3FFF ROM bank 00
 // 4000-7FFF ROM bank 01-NN

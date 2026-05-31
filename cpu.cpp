@@ -18,6 +18,9 @@ void CPU::writeHL(uint8_t v) { mmu->write(getHL(), v); }
 CPU::CPU(Memory *mem) {
   mmu = mem;
 
+  IME = false;
+  EI_pending = false;
+
   // Initialize opcode tables to unimplemented
   for (int i = 0; i < 256; i++) {
     table[i] = &CPU::UNIMPLEMENTED;
@@ -121,7 +124,7 @@ CPU::CPU(Memory *mem) {
   // === 0x40-0x7F: LD r,r and HALT ===
   for (int i = 0x40; i <= 0x7F; i++) {
     if (i == 0x76) {
-      table[i] = &CPU::NOP; // HALT (treated as NOP for now)
+      table[i] = &CPU::HALT_OP; // HALT (treated as NOP for now)
     } else {
       table[i] = &CPU::LD_DISPATCH;
     }
@@ -169,12 +172,14 @@ CPU::CPU(Memory *mem) {
   table[0xE0] = &CPU::LD_DISPATCH; // LDH (a8),A
   table[0xE1] = &CPU::POP_HL;
   table[0xE2] = &CPU::LD_DISPATCH; // LD (C),A
+  table[0xE3] = &CPU::LD_DISPATCH; // EX (SP),HL
   table[0xE5] = &CPU::PUSH_HL;
   table[0xE6] = &CPU::AND_d8;
   table[0xE7] = &CPU::LD_DISPATCH; // RST 20H
   table[0xE8] = &CPU::LD_DISPATCH; // ADD SP,r8
   table[0xE9] = &CPU::LD_DISPATCH; // JP (HL)
   table[0xEA] = &CPU::LD_DISPATCH; // LD (a16),A
+  table[0xEB] = &CPU::LD_DISPATCH; // EX DE,HL
   table[0xEE] = &CPU::XOR_d8;
   table[0xEF] = &CPU::LD_DISPATCH; // RST 28H
 
@@ -218,9 +223,57 @@ CPU::CPU(Memory *mem) {
 
 int CPU::step() {
 
+  // delayed EI enable
+  if (justEnabledEI) {
+    IME = true;
+    justEnabledEI = false;
+  }
+
+  uint8_t IF = mmu->read(0xFF0F);
+  uint8_t IE = mmu->read(0xFFFF);
+  uint8_t pending = IF & IE;
+
+  // HALT handling
+  if (halted) {
+
+    if (!pending)
+      return 4;
+
+    halted = false;
+  }
+
+  // interrupts
+  if (IME && pending) {
+
+    for (int i = 0; i < 5; i++) {
+
+      if (pending & (1 << i)) {
+
+        IME = false;
+
+        IF &= ~(1 << i);
+        mmu->write(0xFF0F, IF);
+
+        PUSH(PC);
+
+        PC = 0x40 + (i * 8);
+
+        return 20;
+      }
+    }
+  }
+
   uint8_t opcode = fetch8();
 
-  return (this->*table[opcode])();
+  int cycles = (this->*table[opcode])();
+
+  // delayed EI scheduling
+  if (EI_pending) {
+    justEnabledEI = true;
+    EI_pending = false;
+  }
+
+  return cycles;
 }
 
 // === Basic opcodes ===
@@ -229,6 +282,11 @@ int CPU::NOP() { return 4; }
 int CPU::LD_A_d8() {
   A = fetch8();
   return 8;
+}
+
+int CPU::HALT_OP() {
+  halted = true;
+  return 4;
 }
 
 int CPU::LD_B_d8() {
@@ -689,8 +747,13 @@ int CPU::LD_DISPATCH() {
     return 12;
   }
 
-  case 0xE9:
-    PC = getHL();
+  case 0xE9: {
+    uint16_t addr = getHL();
+    PC = addr;
+    if (PC >= 0xFF00) {
+      printf("JP (HL) set PC to %04X\n", PC);
+    }
+  }
     return 4; // JP (HL)
   }
 
@@ -754,7 +817,8 @@ int CPU::LD_DISPATCH() {
     }
     return 8; // RET C
   case 0xD9:
-    RET();     /* enable interrupts */
+    RET(); /* enable interrupts */
+    IME = true;
     return 16; // RETI
   }
 
@@ -793,6 +857,23 @@ int CPU::LD_DISPATCH() {
 
   // Misc instructions
   switch (opcode) {
+  case 0xE3: { // EX (SP),HL
+    uint16_t tmp = getHL();
+    uint8_t lo = mmu->read(SP);
+    uint8_t hi = mmu->read(SP + 1);
+    uint16_t mem = lo | (hi << 8);
+    mmu->write(SP, tmp & 0xFF);
+    mmu->write(SP + 1, (tmp >> 8) & 0xFF);
+    setHL(mem);
+    return 16;
+  }
+  case 0xEB: { // EX DE,HL
+    uint16_t de = getDE();
+    uint16_t hl = getHL();
+    setDE(hl);
+    setHL(de);
+    return 4;
+  }
   case 0x27: { // DAA
     uint16_t a = A;
     if (!getN()) {
@@ -843,9 +924,12 @@ int CPU::LD_DISPATCH() {
     return 16;
   }
 
-  case 0xF3:  /* disable interrupts */
+  case 0xF3: /* disable interrupts */
+    IME = false;
     return 4; // DI
   case 0xFB:  /* enable interrupts */
+    // EI takes effect after next instruction
+    EI_pending = true;
     return 4; // EI
   }
 
@@ -898,16 +982,28 @@ int CPU::ALU_DISPATCH() {
   return cycles;
 }
 
+int CPU::PREFIX_CB() {
+
+  uint8_t opcode = fetch8();
+
+  return (this->*cbtable[opcode])();
+}
+
 int CPU::CB_DISPATCH() {
-  uint8_t opcode = mmu->read(PC - 1);
+
+  uint8_t opcode = fetch8();
+
   int op = (opcode >> 3) & 7;
   int reg = opcode & 7;
 
   uint8_t *target = (reg == 6) ? nullptr : regs[reg];
+
   uint8_t val = (reg == 6) ? readHL() : *target;
+
   int cycles = (reg == 6) ? 16 : 8;
 
   switch (op) {
+
   case 0:
     RLC(val);
     break;
@@ -926,24 +1022,25 @@ int CPU::CB_DISPATCH() {
   case 5:
     SRA(val);
     break;
-  case 6: { // SWAP
+
+  case 6: // SWAP
     val = ((val & 0x0F) << 4) | ((val & 0xF0) >> 4);
+
     setZ(val == 0);
     setN(false);
     setH(false);
     setC(false);
     break;
-  }
+
   case 7:
     SRL(val);
     break;
   }
 
-  if (reg == 6) {
+  if (reg == 6)
     writeHL(val);
-  } else {
+  else
     *target = val;
-  }
 
   return cycles;
 }
@@ -992,9 +1089,33 @@ int CPU::SET_DISPATCH() {
 }
 
 int CPU::UNIMPLEMENTED() {
-  printf("Unknown opcode %02X at %04X\n", mmu->read(PC - 1), PC - 1);
+  uint16_t addr = PC - 1;
+  uint8_t op = mmu->read(addr);
   exit(1);
   return 0;
+}
+
+int CPU::LD_r_r(int dst, int src) {
+  if (dst == 6 && src == 6) {
+    // (HL) -> (HL) no-op
+    return 4;
+  }
+
+  if (src == 6) {
+    // LD r,(HL)
+    *regs[dst] = readHL();
+    return 8;
+  }
+
+  if (dst == 6) {
+    // LD (HL),r
+    writeHL(*regs[src]);
+    return 8;
+  }
+
+  // LD r,r'
+  *regs[dst] = *regs[src];
+  return 4;
 }
 
 // === Register pair operations ===
@@ -1177,7 +1298,10 @@ void CPU::CALL(uint16_t addr) {
   PC = addr;
 }
 
-void CPU::RET() { PC = POP(); }
+void CPU::RET() {
+  uint16_t val = POP();
+  PC = val;
+}
 
 // === Jump operations ===
 void CPU::JP(uint16_t addr) { PC = addr; }
